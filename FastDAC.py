@@ -2,6 +2,10 @@
 This module provides a `pyserial` interface to instruments called FastDACs that live in the Quantum Devices Group at UBC, Vancouver. The original author is Ruiheng Su. 
 """
 
+from logging import exception
+from re import I
+import time
+from matplotlib.pyplot import step 
 import serial
 import struct
 import numpy as np
@@ -317,20 +321,32 @@ class FastDAC():
 
         self.ser.write(bytes(cmd, "ascii"))
 
-        channel_readings = {ac: np.zeros(steps) for ac in channels}
+        channel_readings = {ac: list() for ac in channels}
         try:
-            for i in range(0, steps):
+            while self.ser.in_waiting > 15 or len(channel_readings[0]) < steps:
                 for channel in channels:
-                    int_val = FastDAC.two_bytes_to_int(self.ser.read(2))
-                    voltage_reading = FastDAC.map_int16_to_mV(int_val)
-                    channel_readings[channel][i] = voltage_reading
+                    buffer = ""
+                    if self.ser.in_waiting > 35:
+                        buffer = self.ser.read(20)
+                    else:
+                        buffer = self.ser.read(2)
+                    # separate the buffer
+                    info = [buffer[i:i+2] for i in range(0, len(buffer), 2)]
+                    for two_b in info:
+                        int_val = FastDAC.two_bytes_to_int(two_b)
+                        voltage_reading = FastDAC.map_int16_to_mV(int_val)
+                        channel_readings[channel].append(voltage_reading)
         except:
             self.ser.close()
             raise
-
-        data = self.ser.readline().decode('ascii').rstrip('\r\n')
+        # .decode('ascii').rstrip('\r\n')
+        data = self.ser.readline()
         self.ser.close()
         print(data)
+
+        # convert to numpy array
+        for k in channel_readings.keys():
+            channel_readings[k] = np.array(channel_readings[k])
 
         return channel_readings
 
@@ -425,7 +441,7 @@ class FastDAC():
     def SET_CONVERT_TIME(self, channel=0, convertTime=1000):
         """Sets the conversion time in microseconds. This is the time required to digitize the analog signal.  
 
-        "The sum of the conversion times of all selected channels will determine overall sample rate.  Shorter conversion times result in more measured noise; Refer to the AD7734 datasheet for typical noise vs conversion times (chopping is always enabled). For the AD7734, conversion times faster than approximately 300µs will start to exhibit a linear calibration offset >1mV at full range. If desired, this offset can be calibrated out using the provided calibration functions. Maximum conversion time: 2686µs. Minimum conversion time: 82µs. The function will return the actual closest possible setting."
+        "The sum of the conversion times of all selected channels will determine overall sample rate.  Shorter conversion times result in more measured noise; Refer to the AD7734 datasheet for typical noise vs conversion times (chopping is always enabled). For the AD7734, conversion times faster than approximately 300us will start to exhibit a linear calibration offset >1mV at full range. If desired, this offset can be calibrated out using the provided calibration functions. Maximum conversion time: 2686us. Minimum conversion time: 82us. The function will return the actual closest possible setting."
 
         Parameters
         ----------
@@ -445,7 +461,7 @@ class FastDAC():
         return self.query(bytes(cmd, "ascii"))
 
     def READ_CONVERT_TIME(self, channel=0):
-        """Returns the convert time on the specified channel
+        """Returns the convert time on the specified channel in uS
 
         Parameters
         ----------
@@ -461,24 +477,124 @@ class FastDAC():
         cmd = "READ_CONVERT_TIME,{}\r".format(channel)
         return self.query(bytes(cmd, "ascii"))
 
-    def check_conversion_time(self, channels=[0, 1, 2, 3], reps=100):
-        """Checks conversion time on every channel, for the specified reps
+    # This function would be better placed in a testing suite!
+    # def check_conversion_time(self, channels=[0, 1, 2, 3], reps=100):
+    #     """Checks conversion time on every channel, for the specified reps
+
+    #     Parameters
+    #     ----------
+    #     channels : list, optional 
+    #         List of ADC channels to check conversion time for 
+
+    #     Returns
+    #     -------
+    #     A list containing the read conversion times as integers
+    #     """
+
+    #     read = list()
+    #     for i in range(0, reps):
+    #         for ac in channels:
+    #             time_read = int(self.READ_CONVERT_TIME(ac))
+    #             if time_read not in read:
+    #                 read.append(time_read)
+
+    #     return read
+
+    def read_vs_time(self, duration : int, channels = [0,]):
+        """Reads the specified channel in chuncks, for a number of seconds as specified in duration.
 
         Parameters
         ----------
-        channels : list, optional 
-            List of ADC channels to check conversion time for 
+        duration : int
+            The number of seconds to read ADC channels specifed for 
 
-        Returns
-        -------
-        A list containing the read conversion times as integers
+        channels : list, optional 
+            The ADC channels on the fastDAC to read from 
         """
 
-        read = list()
-        for i in range(0, reps):
-            for ac in channels:
-                time_read = int(self.READ_CONVERT_TIME(ac))
-                if time_read not in read:
-                    read.append(time_read)
+        assert len(channels) > 0, "What? No ADC channel selected \U0001F923"
 
-        return read
+        c_time = list()
+        for c in channels:
+            t_read = int(self.READ_CONVERT_TIME(channel = c))
+            if t_read not in c_time:
+                c_time.append(t_read)
+        
+        assert len(c_time) == 1, "What? Bad conversion time \U0001F923"
+
+        c_freq = 1/(c_time[0]*10**-6) #in Hz
+
+        measure_freq = c_freq/len(channels)
+        steps = int(np.round(measure_freq*duration))
+        # print(steps)
+
+        cmd = "SPEC_ANA,{},{}\r".format(
+            "".join(str(ac) for ac in channels), steps)
+
+        if self.verbose:
+            print(cmd)
+        if not self.ser.is_open:
+            self.ser.open()
+
+        self.ser.write(bytes(cmd, "ascii"))
+        channel_readings = {ac: list() for ac in channels}
+
+        import matplotlib.pyplot as plt
+        import matplotlib.animation as animation    
+
+        fig, ax = plt.subplots(figsize=(10,4))
+        line, = ax.plot([], [])
+        x_array = np.linspace(0, duration, steps)
+        ax.set_xlim(0, duration)
+
+        def data_gen():
+            try:
+                if not self.ser.is_open:
+                    self.ser.open()
+                time.sleep(0.1)
+                while self.ser.in_waiting > 15 or len(channel_readings[channels[0]]) < steps:
+                    print(self.ser.in_waiting)
+                    for channel in channels:
+                        buffer = ""
+                        if self.ser.in_waiting > 200+15:
+                            buffer = self.ser.read(200)
+                        else:
+                            buffer = self.ser.read(2)
+                        # separate the buffer
+                        info = [buffer[i:i+2] for i in range(0, len(buffer), 2)]
+                        # print(len(info))
+                        for two_b in info:
+                            int_val = FastDAC.two_bytes_to_int(two_b)
+                            voltage_reading = FastDAC.map_int16_to_mV(int_val)
+                            channel_readings[channel].append(voltage_reading)
+                    yield len(channel_readings[channels[0]]), 0
+            except Exception as e:
+                print(e)
+                self.ser.close()
+                raise
+
+        def animate(data):
+            i, _ = data 
+            y_data = channel_readings[channels[0]]
+            line.set_data(x_array[0:i], y_data)
+            ymin = np.min(y_data)
+            ymax = np.max(y_data)
+            ax.set_ylim(ymin, ymax)
+            # ax.figure.canvas.draw()
+            return line,
+
+        ani = animation.FuncAnimation(fig, animate, data_gen, interval=0, blit=True, repeat = False)
+        plt.show()
+        data = self.ser.readline().decode('ascii').rstrip('\r\n')
+        self.ser.close()
+        print(data)
+
+        plt.plot(x_array, channel_readings[channels[0]])
+        plt.show()
+    
+        # return channel_readings
+
+if __name__ == "__main__":
+    fd = FastDAC("COM4", baudrate=1750000, timeout=1, verbose=True)   
+    # print(fd.SPEC_ANA(steps=1000))
+    fd.read_vs_time(1, channels=[0,])
