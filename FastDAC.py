@@ -2,15 +2,16 @@
 This module provides a `pyserial` interface to instruments called FastDACs that live in the Quantum Devices Group at UBC, Vancouver. The original author is Ruiheng Su. 
 """
 
-from logging import exception
-from re import I
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+
 import time
-from matplotlib.pyplot import step 
 import serial
 import struct
+from re import I
 import numpy as np
 from pathlib import Path
-
+from logging import exception
 
 class FastDAC():
 
@@ -230,6 +231,11 @@ class FastDAC():
         An double  
         """
         return (int_val - 0) * (20000.0) / (65536.0) - 10000.0
+
+    def STOP(self):
+        """Stops any sweeps or reads that the FastDAC is currently doing
+        """
+        return self.ser.write(b"STOP\r")
 
     def NOP(self):
         """The most useful command. Does absolutely nothing. 
@@ -483,8 +489,8 @@ class FastDAC():
 
     #     Parameters
     #     ----------
-    #     channels : list, optional 
-    #         List of ADC channels to check conversion time for 
+    #     channels : list, optional
+    #         List of ADC channels to check conversion time for
 
     #     Returns
     #     -------
@@ -500,7 +506,7 @@ class FastDAC():
 
     #     return read
 
-    def read_vs_time(self, duration : int, channels = [0,]):
+    def read_vs_time(self, duration: int, channels=[0, ]):
         """Reads the specified channel in chuncks, for a number of seconds as specified in duration.
 
         Parameters
@@ -516,13 +522,13 @@ class FastDAC():
 
         c_time = list()
         for c in channels:
-            t_read = int(self.READ_CONVERT_TIME(channel = c))
+            t_read = int(self.READ_CONVERT_TIME(channel=c))
             if t_read not in c_time:
                 c_time.append(t_read)
-        
+
         assert len(c_time) == 1, "What? Bad conversion time \U0001F923"
 
-        c_freq = 1/(c_time[0]*10**-6) #in Hz
+        c_freq = 1/(c_time[0]*10**-6)  # in Hz
 
         measure_freq = c_freq/len(channels)
         steps = int(np.round(measure_freq*duration))
@@ -539,13 +545,16 @@ class FastDAC():
         self.ser.write(bytes(cmd, "ascii"))
         channel_readings = {ac: list() for ac in channels}
 
-        import matplotlib.pyplot as plt
-        import matplotlib.animation as animation    
+        def handle_close(evt):
+            self.STOP()
+            data = self.ser.readline()
+            self.ser.close()
 
-        fig, ax = plt.subplots(figsize=(10,4))
+        fig, ax = plt.subplots(figsize=(10, 4))
+        fig.canvas.mpl_connect('close_event', handle_close)
         line, = ax.plot([], [])
         x_array = np.linspace(0, duration, steps)
-        ax.set_xlim(0, duration)
+        # ax.set_xlim(0, duration)
 
         def data_gen():
             try:
@@ -556,12 +565,16 @@ class FastDAC():
                     print(self.ser.in_waiting)
                     for channel in channels:
                         buffer = ""
-                        if self.ser.in_waiting > 200+15:
+                        waiting = self.ser.in_waiting
+                        if waiting > 1000 + 15:
+                            buffer = self.ser.read(1000)
+                        elif self.ser.in_waiting > 200+15:
                             buffer = self.ser.read(200)
                         else:
                             buffer = self.ser.read(2)
                         # separate the buffer
-                        info = [buffer[i:i+2] for i in range(0, len(buffer), 2)]
+                        info = [buffer[i:i+2]
+                                for i in range(0, len(buffer), 2)]
                         # print(len(info))
                         for two_b in info:
                             int_val = FastDAC.two_bytes_to_int(two_b)
@@ -574,27 +587,33 @@ class FastDAC():
                 raise
 
         def animate(data):
-            i, _ = data 
+            i, _ = data
             y_data = channel_readings[channels[0]]
             line.set_data(x_array[0:i], y_data)
             ymin = np.min(y_data)
             ymax = np.max(y_data)
             ax.set_ylim(ymin, ymax)
-            # ax.figure.canvas.draw()
+            if i == len(x_array):
+                ax.set_xlim(0, x_array[i-1])
+            else: 
+                ax.set_xlim(0, x_array[i])
+            ax.set_xlabel("Time [S]")
+            ax.set_ylabel("")
+            ax.figure.canvas.draw()
             return line,
 
-        ani = animation.FuncAnimation(fig, animate, data_gen, interval=0, blit=True, repeat = False)
+        ani = animation.FuncAnimation(
+            fig, animate, data_gen, interval=0, blit=True, repeat=False)
         plt.show()
-        data = self.ser.readline().decode('ascii').rstrip('\r\n')
-        self.ser.close()
-        print(data)
-
-        plt.plot(x_array, channel_readings[channels[0]])
-        plt.show()
-    
-        # return channel_readings
+        # actual_read = len(channel_readings[channels[0]])
+        # fig, ax = plt.subplots(figsize=(10, 4))
+        # ax.plot(x_array[:actual_read], channel_readings[channels[0]])
+        # ax.autoscale(tight=True)
+        # ax.set_xlabel("Time [S]")
+        # ax.set_ylabel("")
+        # plt.show()
 
 if __name__ == "__main__":
-    fd = FastDAC("COM4", baudrate=1750000, timeout=1, verbose=True)   
+    fd = FastDAC("COM3", baudrate=1750000, timeout=1, verbose=True)
     # print(fd.SPEC_ANA(steps=1000))
-    fd.read_vs_time(1, channels=[0,])
+    fd.read_vs_time(10, channels=[1, ])
