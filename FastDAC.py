@@ -13,6 +13,7 @@ import numpy as np
 from pathlib import Path
 from logging import exception
 
+
 class FastDAC():
 
     def __init__(self, port: str, baudrate: int, timeout: int, testing=False, verbose=False, datapath="Measurement_Data"):
@@ -595,7 +596,7 @@ class FastDAC():
             ax.set_ylim(ymin, ymax)
             if i == len(x_array):
                 ax.set_xlim(0, x_array[i-1])
-            else: 
+            else:
                 ax.set_xlim(0, x_array[i])
             ax.set_xlabel("Time [S]")
             ax.set_ylabel("")
@@ -613,8 +614,9 @@ class FastDAC():
         # ax.set_ylabel("")
         # plt.show()
 
+
 if __name__ == "__main__":
     fd = FastDAC("COM3", baudrate=1750000, timeout=1, verbose=True)
     # print(fd.SPEC_ANA(steps=1000))
     # fd.read_vs_time(10, channels=[1, ])
-    print(fd.SPEC_ANA(channels=[1,], steps=1000))
+    print(fd.SPEC_ANA(channels=[1, ], steps=1000))
