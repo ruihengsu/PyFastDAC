@@ -13,9 +13,7 @@ import numpy as np
 from pathlib import Path
 from logging import exception
 
-
 class FastDAC():
-
     def __init__(self, port: str, baudrate: int, timeout: int, testing=False, verbose=False, datapath="Measurement_Data"):
         """ Makes a new FastDac object. 
 
