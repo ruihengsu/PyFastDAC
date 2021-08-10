@@ -616,4 +616,5 @@ class FastDAC():
 if __name__ == "__main__":
     fd = FastDAC("COM3", baudrate=1750000, timeout=1, verbose=True)
     # print(fd.SPEC_ANA(steps=1000))
-    fd.read_vs_time(10, channels=[1, ])
+    # fd.read_vs_time(10, channels=[1, ])
+    print(fd.SPEC_ANA(channels=[1,], steps=1000))
