@@ -14,7 +14,7 @@ from pathlib import Path
 from logging import exception
 
 class FastDAC():
-    def __init__(self, port: str, baudrate: int, timeout: int, testing=False, verbose=False, datapath="Measurement_Data"):
+    def __init__(self, serialReader, datapath="Measurement_Data"):
         """ Makes a new FastDac object. 
 
         Parameters
@@ -35,35 +35,12 @@ class FastDAC():
         -------
         A str 
         """
-        self.verbose = verbose
-        # private class variables
-        self.__baudrate = baudrate
-        self.__timeout = timeout
-        self.__port = port
-        if not testing:
-            try:
-                """
-                some times the port is already occupied, and will throw an exception
-                if the port is not connected anywhere else, restarting the terminal,
-                or the jupyter session will help.
-                """
-                self.ser = serial.Serial(port, baudrate, timeout=timeout)
-                self.ser.reset_input_buffer()
-                self.ser.reset_output_buffer()
-                self.ser.read_all()
-                id = self.IDN()
-                assert id, "Empty IDN Received."
-                print(id)
-            except Exception as e:
-                try:
-                    self.ser.close()
-                except:
-                    pass
-                print(e)
-                # raise
-        else:
-            self.ser = None
-
+        self.ser = serialReader
+        
+        id = self.IDN()
+        assert id, "Empty IDN Received."
+        print(id)
+        
         self.__datapath = datapath
         Path(datapath).mkdir(parents=True, exist_ok=True)
 
@@ -73,37 +50,28 @@ class FastDAC():
 
     @property
     def baudrate(self):
-        return self.__baudrate
+        return self.ser.baudrate
 
     @baudrate.setter
     def baudrate(self, br):
-        # set the baudrate
-        self.__baudrate = br
-        # make new Serial port object
-        self.ser.baudrate = self.__baudrate
-        print("Baudrate MODIFIED")
+        self.ser.baudrate = br
 
     @property
     def timeout(self):
-        return self.__timeout
+        return self.ser.timeout
 
     @timeout.setter
     def timeout(self, to):
-        # set the timeout
-        self.__timeout = to
-        self.ser.timeout = self.__timeout
+        self.ser.timeout = to
         print("Timeout MODIFIED")
 
     @property
     def port(self):
-        return self.__port
+        return self.ser.timeout.port
 
     @port.setter
     def port(self, po):
-        # set the baudrate
-        self.__port = po
-        # make new Serial port object
-        self.ser.port = self.__port
+        self.ser.port = po 
         print("Port MODIFIED")
 
     def query(self, command):
@@ -118,25 +86,24 @@ class FastDAC():
         -------
         A string/byte string  
         """
-        if self.verbose:
-            print("CMD: {}".format(command))
-
-        if not self.ser.is_open:
-            self.ser.open()
-
+        
+        assert self.ser.q.empty() 
+        
         self.ser.write(command)
-
+        self.ser.read(command)
+        
         try:
-            data = self.ser.readline()
-            if self.verbose:
-                print(data)
+            data = self.ser.q.get(timeout=self.ser.timeout)
             data = data.decode('ascii').rstrip('\r\n')
-        except:
-            self.ser.close()
-            raise
+
+        except Exception as e: 
+            print("No data read from queue.")
+            raise e
+                  
         self.ser.close()
         return data
-
+        
+        
     def write(self, command, close=True):
         """Write a command to the instrument. 
 
@@ -148,14 +115,10 @@ class FastDAC():
         close : bool, optional
             closes the serial port if True. Otherwise, leave the serial port open.
         """
-        if self.verbose:
-            print("CMD: {}".format(command))
         if not self.ser.is_open:
             self.ser.open()
-        self.ser.write(command)
-        if close:
-            self.ser.close()
-
+        self.ser.write(command, close)
+        
     @staticmethod
     def two_bytes_to_int(two_bytes, bigEndian=True):
         """Converts a byte string of two bytes to a single integer
@@ -319,8 +282,6 @@ class FastDAC():
         cmd = "SPEC_ANA,{},{}\r".format(
             "".join(str(ac) for ac in channels), steps)
 
-        if self.verbose:
-            print(cmd)
         if not self.ser.is_open:
             self.ser.open()
 
@@ -419,8 +380,6 @@ class FastDAC():
 
         cmd = cmd + str(steps) + "\r"
 
-        if self.verbose:
-            print(cmd)
         if not self.ser.is_open:
             self.ser.open()
 
@@ -482,29 +441,6 @@ class FastDAC():
         cmd = "READ_CONVERT_TIME,{}\r".format(channel)
         return self.query(bytes(cmd, "ascii"))
 
-    # This function would be better placed in a testing suite!
-    # def check_conversion_time(self, channels=[0, 1, 2, 3], reps=100):
-    #     """Checks conversion time on every channel, for the specified reps
-
-    #     Parameters
-    #     ----------
-    #     channels : list, optional
-    #         List of ADC channels to check conversion time for
-
-    #     Returns
-    #     -------
-    #     A list containing the read conversion times as integers
-    #     """
-
-    #     read = list()
-    #     for i in range(0, reps):
-    #         for ac in channels:
-    #             time_read = int(self.READ_CONVERT_TIME(ac))
-    #             if time_read not in read:
-    #                 read.append(time_read)
-
-    #     return read
-
     def read_vs_time(self, duration: int, channels=[0, ]):
         """Reads the specified channel in chuncks, for a number of seconds as specified in duration.
 
@@ -536,8 +472,6 @@ class FastDAC():
         cmd = "SPEC_ANA,{},{}\r".format(
             "".join(str(ac) for ac in channels), steps)
 
-        if self.verbose:
-            print(cmd)
         if not self.ser.is_open:
             self.ser.open()
 
@@ -614,7 +548,7 @@ class FastDAC():
 
 
 if __name__ == "__main__":
-    fd = FastDAC("COM3", baudrate=1750000, timeout=1, verbose=True)
+    fd = FastDAC("COM3", baudrate=1750000, timeout=1,)
     # print(fd.SPEC_ANA(steps=1000))
     # fd.read_vs_time(10, channels=[1, ])
     print(fd.SPEC_ANA(channels=[1, ], steps=1000))
