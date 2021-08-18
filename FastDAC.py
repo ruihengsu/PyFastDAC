@@ -623,10 +623,11 @@ class FastDAC():
 
         if self.verbose:
             print(cmd)
-        if not self.ser.is_open:
-            self.ser.open()
-
+        
         for i in range(repeat):
+            if not self.ser.is_open:
+                self.ser.open()
+            
             self.ser.write(bytes(cmd, "ascii"))
             channel_readings = {ac: list() for ac in channels}
 
@@ -668,12 +669,14 @@ class FastDAC():
                 with fig.batch_update():
                     f, Pxx_den = signal.periodogram(channel_readings[channels[0]], fs = measure_freq,)
                     scatter.x = tuple(f)
-                    # scatter.y = tuple(10*np.log10(Pxx_den/1)) 
-                    scatter.y = tuple(Pxx_den)
+                    scatter.y = tuple(10*np.log10(Pxx_den/1)) 
+                    # scatter.y = tuple(Pxx_den)
+                    
             self.STOP()
             data = self.ser.readline()
             print(data)
-        self.ser.close()
+            
+            self.ser.close()
         logging.debug('Exiting')
         
 
