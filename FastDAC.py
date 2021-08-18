@@ -545,14 +545,13 @@ class FastDAC():
 
         x_array = np.linspace(0, duration, steps)
         
-        scatter = fig.data[0]
         try:
             if not self.ser.is_open:
                 self.ser.open()
             time.sleep(0.1)
             while self.ser.in_waiting > 15 or len(channel_readings[channels[0]]) < steps:
                 new_readings = []
-                
+                print(self.ser.in_waiting)
                 for channel in channels:
                     buffer = ""
                     waiting = self.ser.in_waiting
@@ -572,11 +571,13 @@ class FastDAC():
                         new_readings.append(voltage_reading)
                 
                 channel_readings[channel] += new_readings
+                if fig is not None: 
+                    scatter = fig.data[0]
+            
+                    with fig.batch_update():
+                        scatter.x += tuple(x_array[len(scatter.x):len(scatter.x) + len(new_readings)])
+                        scatter.y += tuple(new_readings) 
                         
-                with fig.batch_update():
-                    scatter.x += tuple(x_array[len(scatter.x):len(new_readings)])
-                    scatter.y += tuple(new_readings) 
-                    
         except Exception as e:
             print(e)
             self.ser.close()
@@ -584,6 +585,7 @@ class FastDAC():
         
         self.STOP()
         data = self.ser.readline()
+        print(data)
         self.ser.close()
         logging.debug('Exiting')
 
