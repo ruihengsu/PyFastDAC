@@ -8,6 +8,7 @@ from re import I
 import numpy as np
 from pathlib import Path
 import logging
+from scipy import signal
 
 logging.basicConfig(level=logging.DEBUG,
                     format='(%(threadName)-9s) %(message)s',)
@@ -69,7 +70,7 @@ class FastDAC():
 
     @property
     def datapath(self):
-        return self.__datapath
+        return Path(self.__datapath)
 
     @property
     def baudrate(self):
@@ -572,11 +573,12 @@ class FastDAC():
                 
                 channel_readings[channel] += new_readings
                 if fig is not None: 
+
                     scatter = fig.data[0]
-            
                     with fig.batch_update():
                         scatter.x += tuple(x_array[len(scatter.x):len(scatter.x) + len(new_readings)])
                         scatter.y += tuple(new_readings) 
+
                         
         except Exception as e:
             print(e)
@@ -589,6 +591,91 @@ class FastDAC():
         self.ser.close()
         logging.debug('Exiting')
 
+    def FDacSpectrumAnalyzer(self, fig, duration: int, repeat = 0, channels=[0, ], ):
+        """Reads the specified channel in chuncks, for a number of seconds as specified in duration.
+
+        Parameters
+        ----------
+        duration : int
+            The number of seconds to read ADC channels specifed for 
+
+        channels : list, optional 
+            The ADC channels on the fastDAC to read from 
+        """
+        logging.debug('Starting')
+        assert len(channels) > 0, "What? No ADC channel selected \U0001F923"
+
+        c_time = list()
+        for c in channels:
+            t_read = int(self.READ_CONVERT_TIME(channel=c))
+            if t_read not in c_time:
+                c_time.append(t_read)
+
+        assert len(c_time) == 1, "What? Bad conversion time \U0001F923"
+
+        c_freq = 1/(c_time[0]*10**-6)  # in Hz
+
+        measure_freq = c_freq/len(channels)
+        steps = int(np.round(measure_freq*duration))
+
+        cmd = "SPEC_ANA,{},{}\r".format(
+            "".join(str(ac) for ac in channels), steps)
+
+        if self.verbose:
+            print(cmd)
+        if not self.ser.is_open:
+            self.ser.open()
+
+        for i in range(repeat):
+            self.ser.write(bytes(cmd, "ascii"))
+            channel_readings = {ac: list() for ac in channels}
+
+            try:
+                if not self.ser.is_open:
+                    self.ser.open()
+                time.sleep(0.1)
+                while self.ser.in_waiting > 15 or len(channel_readings[channels[0]]) < steps:
+
+                    for channel in channels:
+                        buffer = ""
+                        waiting = self.ser.in_waiting
+                        if waiting > 1000 + 15:
+                            buffer = self.ser.read(1000)
+                        elif self.ser.in_waiting > 200+15:
+                            buffer = self.ser.read(200)
+                        else:
+                            buffer = self.ser.read(2)
+                            
+                        info = [buffer[i:i+2]
+                                for i in range(0, len(buffer), 2)]
+                        
+                        for two_b in info:
+                            int_val = FastDAC.two_bytes_to_int(two_b)
+                            voltage_reading = FastDAC.map_int16_to_mV(int_val)
+                            channel_readings[channel].append(voltage_reading)
+                            
+            except Exception as e:
+                print(e)
+                self.ser.close()
+                raise
+            
+            if fig is not None:
+                fig.add_scatter(x=[], 
+                                y=[], 
+                                line=dict(width=0.5)
+                                )
+                scatter = fig.data[i]
+                with fig.batch_update():
+                    f, Pxx_den = signal.periodogram(channel_readings[channels[0]], fs = measure_freq,)
+                    scatter.x = tuple(f)
+                    # scatter.y = tuple(10*np.log10(Pxx_den/1)) 
+                    scatter.y = tuple(Pxx_den)
+            self.STOP()
+            data = self.ser.readline()
+            print(data)
+        self.ser.close()
+        logging.debug('Exiting')
+        
 
 if __name__ == "__main__":
     import plotly.graph_objs as go
