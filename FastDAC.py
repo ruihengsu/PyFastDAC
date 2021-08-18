@@ -1,18 +1,16 @@
 """
 This module provides a `pyserial` interface to instruments called FastDACs that live in the Quantum Devices Group at UBC, Vancouver. The original author is Ruiheng Su. 
 """
-
-import matplotlib.pyplot as plt
-import matplotlib.animation as animation
-
 import time
 import serial
 import struct
 from re import I
 import numpy as np
 from pathlib import Path
-from logging import exception
+import logging
 
+logging.basicConfig(level=logging.DEBUG,
+                    format='(%(threadName)-9s) %(message)s',)
 
 class FastDAC():
 
@@ -507,7 +505,7 @@ class FastDAC():
 
     #     return read
 
-    def read_vs_time(self, duration: int, channels=[0, ]):
+    def read_vs_time(self, fig, duration: int, channels=[0, ]):
         """Reads the specified channel in chuncks, for a number of seconds as specified in duration.
 
         Parameters
@@ -518,7 +516,7 @@ class FastDAC():
         channels : list, optional 
             The ADC channels on the fastDAC to read from 
         """
-
+        logging.debug('Starting')
         assert len(channels) > 0, "What? No ADC channel selected \U0001F923"
 
         c_time = list()
@@ -533,7 +531,6 @@ class FastDAC():
 
         measure_freq = c_freq/len(channels)
         steps = int(np.round(measure_freq*duration))
-        # print(steps)
 
         cmd = "SPEC_ANA,{},{}\r".format(
             "".join(str(ac) for ac in channels), steps)
@@ -546,77 +543,62 @@ class FastDAC():
         self.ser.write(bytes(cmd, "ascii"))
         channel_readings = {ac: list() for ac in channels}
 
-        def handle_close(evt):
-            self.STOP()
-            data = self.ser.readline()
-            self.ser.close()
-
-        fig, ax = plt.subplots(figsize=(10, 4))
-        fig.canvas.mpl_connect('close_event', handle_close)
-        line, = ax.plot([], [])
         x_array = np.linspace(0, duration, steps)
-        # ax.set_xlim(0, duration)
-
-        def data_gen():
-            try:
-                if not self.ser.is_open:
-                    self.ser.open()
-                time.sleep(0.1)
-                while self.ser.in_waiting > 15 or len(channel_readings[channels[0]]) < steps:
-                    print(self.ser.in_waiting)
-                    for channel in channels:
-                        buffer = ""
-                        waiting = self.ser.in_waiting
-                        if waiting > 1000 + 15:
-                            buffer = self.ser.read(1000)
-                        elif self.ser.in_waiting > 200+15:
-                            buffer = self.ser.read(200)
-                        else:
-                            buffer = self.ser.read(2)
-                        # separate the buffer
-                        info = [buffer[i:i+2]
-                                for i in range(0, len(buffer), 2)]
-                        # print(len(info))
-                        for two_b in info:
-                            int_val = FastDAC.two_bytes_to_int(two_b)
-                            voltage_reading = FastDAC.map_int16_to_mV(int_val)
-                            channel_readings[channel].append(voltage_reading)
-                    yield len(channel_readings[channels[0]]), 0
-            except Exception as e:
-                print(e)
-                self.ser.close()
-                raise
-
-        def animate(data):
-            i, _ = data
-            y_data = channel_readings[channels[0]]
-            line.set_data(x_array[0:i], y_data)
-            ymin = np.min(y_data)
-            ymax = np.max(y_data)
-            ax.set_ylim(ymin, ymax)
-            if i == len(x_array):
-                ax.set_xlim(0, x_array[i-1])
-            else:
-                ax.set_xlim(0, x_array[i])
-            ax.set_xlabel("Time [S]")
-            ax.set_ylabel("")
-            ax.figure.canvas.draw()
-            return line,
-
-        ani = animation.FuncAnimation(
-            fig, animate, data_gen, interval=0, blit=True, repeat=False)
-        plt.show()
-        # actual_read = len(channel_readings[channels[0]])
-        # fig, ax = plt.subplots(figsize=(10, 4))
-        # ax.plot(x_array[:actual_read], channel_readings[channels[0]])
-        # ax.autoscale(tight=True)
-        # ax.set_xlabel("Time [S]")
-        # ax.set_ylabel("")
-        # plt.show()
+        
+        scatter = fig.data[0]
+        try:
+            if not self.ser.is_open:
+                self.ser.open()
+            time.sleep(0.1)
+            while self.ser.in_waiting > 15 or len(channel_readings[channels[0]]) < steps:
+                new_readings = []
+                
+                for channel in channels:
+                    buffer = ""
+                    waiting = self.ser.in_waiting
+                    if waiting > 1000 + 15:
+                        buffer = self.ser.read(1000)
+                    elif self.ser.in_waiting > 200+15:
+                        buffer = self.ser.read(200)
+                    else:
+                        buffer = self.ser.read(2)
+                        
+                    info = [buffer[i:i+2]
+                            for i in range(0, len(buffer), 2)]
+                    
+                    for two_b in info:
+                        int_val = FastDAC.two_bytes_to_int(two_b)
+                        voltage_reading = FastDAC.map_int16_to_mV(int_val)
+                        new_readings.append(voltage_reading)
+                
+                channel_readings[channel] += new_readings
+                        
+                with fig.batch_update():
+                    scatter.x += tuple(x_array[len(scatter.x):len(new_readings)])
+                    scatter.y += tuple(new_readings) 
+                    
+        except Exception as e:
+            print(e)
+            self.ser.close()
+            raise
+        
+        self.STOP()
+        data = self.ser.readline()
+        self.ser.close()
+        logging.debug('Exiting')
 
 
 if __name__ == "__main__":
+    import plotly.graph_objs as go
+    from threading import Thread, Timer
     fd = FastDAC("COM3", baudrate=1750000, timeout=1, verbose=True)
-    # print(fd.SPEC_ANA(steps=1000))
-    # fd.read_vs_time(10, channels=[1, ])
-    print(fd.SPEC_ANA(channels=[1, ], steps=1000))
+    
+    fig = go.FigureWidget(data=[go.Scatter(x=[], y=[])])
+    fig.update_layout(
+        xaxis_title="Time",
+        yaxis_title="Voltage",
+    )
+
+    plot = Thread(name = "ReadVersusTime", target=fd.read_vs_time, args=(fig, 1, ),)
+    plot.start()
+    fig.show()
