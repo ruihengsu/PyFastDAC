@@ -591,7 +591,7 @@ class FastDAC():
         self.ser.close()
         logging.debug('Exiting')
 
-    def FDacSpectrumAnalyzer(self, fig, duration: int, repeat = 0, channels=[0, ], ):
+    def FDacSpectrumAnalyzer(self, duration: int, PDS_fig, TimeSeries_fig = None,  repeat = 0, channels=[0, ], ):
         """Reads the specified channel in chuncks, for a number of seconds as specified in duration.
 
         Parameters
@@ -624,6 +624,8 @@ class FastDAC():
         if self.verbose:
             print(cmd)
         
+        x_array = np.linspace(0, duration, steps)
+
         for i in range(repeat):
             if not self.ser.is_open:
                 self.ser.open()
@@ -636,7 +638,7 @@ class FastDAC():
                     self.ser.open()
                 time.sleep(0.1)
                 while self.ser.in_waiting > 15 or len(channel_readings[channels[0]]) < steps:
-
+                    new_readings = []
                     for channel in channels:
                         buffer = ""
                         waiting = self.ser.in_waiting
@@ -653,21 +655,28 @@ class FastDAC():
                         for two_b in info:
                             int_val = FastDAC.two_bytes_to_int(two_b)
                             voltage_reading = FastDAC.map_int16_to_mV(int_val)
-                            channel_readings[channel].append(voltage_reading)
+                            new_readings.append(voltage_reading)
+                        
+                    channel_readings[channel] += new_readings
+                    if TimeSeries_fig is not None: 
+                        scatter = TimeSeries_fig.data[0]
+                        with TimeSeries_fig.batch_update():
+                            scatter.x += tuple(x_array[len(scatter.x):len(scatter.x) + len(new_readings)])
+                            scatter.y += tuple(new_readings) 
                             
             except Exception as e:
                 print(e)
                 self.ser.close()
                 raise
             
-            if fig is not None:
-                fig.add_scatter(x=[], 
+            if PDS_fig is not None:
+                PDS_fig.add_scatter(x=[], 
                                 y=[], 
                                 line=dict(width=0.5)
                                 )
-                scatter = fig.data[i]
-                with fig.batch_update():
-                    f, Pxx_den = signal.periodogram(channel_readings[channels[0]], fs = measure_freq,)
+                scatter = PDS_fig.data[i]
+                with PDS_fig.batch_update():
+                    f, Pxx_den = signal.welch(channel_readings[channels[0]], fs = measure_freq,)
                     scatter.x = tuple(f)
                     scatter.y = tuple(10*np.log10(Pxx_den/1)) 
                     # scatter.y = tuple(Pxx_den)
