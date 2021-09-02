@@ -552,7 +552,7 @@ class FastDAC():
             time.sleep(0.1)
             while self.ser.in_waiting > 15 or len(channel_readings[channels[0]]) < steps:
                 new_readings = []
-                print(self.ser.in_waiting)
+                # print(self.ser.in_waiting)
                 for channel in channels:
                     buffer = ""
                     waiting = self.ser.in_waiting
@@ -562,16 +562,24 @@ class FastDAC():
                         buffer = self.ser.read(200)
                     else:
                         buffer = self.ser.read(2)
-                        
-                    info = [buffer[i:i+2]
-                            for i in range(0, len(buffer), 2)]
                     
-                    for two_b in info:
-                        int_val = FastDAC.two_bytes_to_int(two_b)
-                        voltage_reading = FastDAC.map_int16_to_mV(int_val)
-                        new_readings.append(voltage_reading)
-                
+                    big_end_arr = np.ndarray(shape=(int(len(buffer)/2)),dtype='>u2', buffer=buffer)
+                    voltage_reading = FastDAC.map_int16_to_mV(big_end_arr).tolist()
+                    new_readings += voltage_reading
+                    
                 channel_readings[channel] += new_readings
+                
+                #     info = [buffer[i:i+2]
+                #             for i in range(0, len(buffer), 2)]
+                    
+                #     for two_b in info:
+                #         int_val = FastDAC.two_bytes_to_int(two_b)
+                #         voltage_reading = FastDAC.map_int16_to_mV(int_val)
+                #         new_readings.append(voltage_reading)
+                    
+                # channel_readings[channel] += new_readings
+                
+                    
                 if fig is not None: 
 
                     scatter = fig.data[0]
@@ -692,6 +700,7 @@ class FastDAC():
 if __name__ == "__main__":
     import plotly.graph_objs as go
     from threading import Thread, Timer
+    
     fd = FastDAC("COM3", baudrate=1750000, timeout=1, verbose=True)
     
     fig = go.FigureWidget(data=[go.Scatter(x=[], y=[])])
@@ -700,6 +709,6 @@ if __name__ == "__main__":
         yaxis_title="Voltage",
     )
 
-    plot = Thread(name = "ReadVersusTime", target=fd.read_vs_time, args=(fig, 1, ),)
+    plot = Thread(name = "ReadVersusTime", target=fd.read_vs_time, args=(fig, 1, [1,]),)
     plot.start()
     fig.show()
