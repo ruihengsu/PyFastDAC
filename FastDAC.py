@@ -13,6 +13,7 @@ from scipy import signal
 logging.basicConfig(level=logging.DEBUG,
                     format='(%(threadName)-9s) %(message)s',)
 
+
 class FastDAC():
 
     def __init__(self, port: str, baudrate: int, timeout: int, testing=False, verbose=False, datapath="Measurement_Data"):
@@ -545,7 +546,7 @@ class FastDAC():
         channel_readings = {ac: list() for ac in channels}
 
         x_array = np.linspace(0, duration, steps)
-        
+
         try:
             if not self.ser.is_open:
                 self.ser.open()
@@ -562,44 +563,35 @@ class FastDAC():
                         buffer = self.ser.read(200)
                     else:
                         buffer = self.ser.read(2)
-                    
-                    big_end_arr = np.ndarray(shape=(int(len(buffer)/2)),dtype='>u2', buffer=buffer)
-                    voltage_reading = FastDAC.map_int16_to_mV(big_end_arr).tolist()
+
+                    big_end_arr = np.ndarray(
+                        shape=(int(len(buffer)/2)), dtype='>u2', buffer=buffer)
+                    voltage_reading = FastDAC.map_int16_to_mV(
+                        big_end_arr).tolist()
                     new_readings += voltage_reading
-                    
+
                 channel_readings[channel] += new_readings
-                
-                #     info = [buffer[i:i+2]
-                #             for i in range(0, len(buffer), 2)]
-                    
-                #     for two_b in info:
-                #         int_val = FastDAC.two_bytes_to_int(two_b)
-                #         voltage_reading = FastDAC.map_int16_to_mV(int_val)
-                #         new_readings.append(voltage_reading)
-                    
-                # channel_readings[channel] += new_readings
-                
-                    
-                if fig is not None: 
+
+                if fig is not None:
 
                     scatter = fig.data[0]
                     with fig.batch_update():
-                        scatter.x += tuple(x_array[len(scatter.x):len(scatter.x) + len(new_readings)])
-                        scatter.y += tuple(new_readings) 
+                        scatter.x += tuple(x_array[len(scatter.x)
+                                           :len(scatter.x) + len(new_readings)])
+                        scatter.y += tuple(new_readings)
 
-                        
         except Exception as e:
             print(e)
             self.ser.close()
             raise
-        
+
         self.STOP()
         data = self.ser.readline()
         print(data)
         self.ser.close()
         logging.debug('Exiting')
 
-    def FDacSpectrumAnalyzer(self, duration: int, PDS_fig, TimeSeries_fig = None,  repeat = 0, channels=[0, ], ):
+    def FDacSpectrumAnalyzer(self, duration: int, PDS_fig, TimeSeries_fig=None,  repeat=0, channels=[0, ], ):
         """Reads the specified channel in chuncks, for a number of seconds as specified in duration.
 
         Parameters
@@ -631,13 +623,13 @@ class FastDAC():
 
         if self.verbose:
             print(cmd)
-        
+
         x_array = np.linspace(0, duration, steps)
 
         for i in range(repeat):
             if not self.ser.is_open:
                 self.ser.open()
-            
+
             self.ser.write(bytes(cmd, "ascii"))
             channel_readings = {ac: list() for ac in channels}
 
@@ -656,59 +648,62 @@ class FastDAC():
                             buffer = self.ser.read(200)
                         else:
                             buffer = self.ser.read(2)
-                            
+
                         info = [buffer[i:i+2]
                                 for i in range(0, len(buffer), 2)]
-                        
+
                         for two_b in info:
                             int_val = FastDAC.two_bytes_to_int(two_b)
                             voltage_reading = FastDAC.map_int16_to_mV(int_val)
                             new_readings.append(voltage_reading)
-                        
+
                     channel_readings[channel] += new_readings
-                    if TimeSeries_fig is not None: 
+                    if TimeSeries_fig is not None:
                         scatter = TimeSeries_fig.data[0]
                         with TimeSeries_fig.batch_update():
-                            scatter.x += tuple(x_array[len(scatter.x):len(scatter.x) + len(new_readings)])
-                            scatter.y += tuple(new_readings) 
-                            
+                            scatter.x += tuple(x_array[len(scatter.x)
+                                               :len(scatter.x) + len(new_readings)])
+                            scatter.y += tuple(new_readings)
+
             except Exception as e:
                 print(e)
                 self.ser.close()
                 raise
-            
+
             if PDS_fig is not None:
-                PDS_fig.add_scatter(x=[], 
-                                y=[], 
-                                line=dict(width=0.5)
-                                )
+                PDS_fig.add_scatter(x=[],
+                                    y=[],
+                                    line=dict(width=0.5)
+                                    )
                 scatter = PDS_fig.data[i]
                 with PDS_fig.batch_update():
-                    f, Pxx_den = signal.welch(channel_readings[channels[0]], fs = measure_freq,)
+                    f, Pxx_den = signal.welch(
+                        channel_readings[channels[0]], fs=measure_freq,)
                     scatter.x = tuple(f)
-                    scatter.y = tuple(10*np.log10(Pxx_den/1)) 
+                    scatter.y = tuple(10*np.log10(Pxx_den/1))
                     # scatter.y = tuple(Pxx_den)
-                    
+
             self.STOP()
             data = self.ser.readline()
             print(data)
-            
+
             self.ser.close()
         logging.debug('Exiting')
-        
+
 
 if __name__ == "__main__":
     import plotly.graph_objs as go
     from threading import Thread, Timer
-    
+
     fd = FastDAC("COM3", baudrate=1750000, timeout=1, verbose=True)
-    
+
     fig = go.FigureWidget(data=[go.Scatter(x=[], y=[])])
     fig.update_layout(
         xaxis_title="Time",
         yaxis_title="Voltage",
     )
 
-    plot = Thread(name = "ReadVersusTime", target=fd.read_vs_time, args=(fig, 1, [1,]),)
+    plot = Thread(name="ReadVersusTime",
+                  target=fd.read_vs_time, args=(fig, 1, [1, ]),)
     plot.start()
     fig.show()
