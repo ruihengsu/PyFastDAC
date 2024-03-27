@@ -337,8 +337,14 @@ class FastDAC():
                         buffer = self.ser.read(20)
                     else:
                         buffer = self.ser.read(2)
-                    # separate the buffer
-                    info = [buffer[i:i+2] for i in range(0, len(buffer), 2)]
+
+                    info = []
+                    for i in range(0, len(buffer), 2):
+                        if len(buffer) >= i + 2:
+                            info.append(buffer[i: i + 2])
+                        else:
+                            break  # discard malformed data at the end of the buffer
+
                     for two_b in info:
                         int_val = FastDAC.two_bytes_to_int(two_b)
                         voltage_reading = FastDAC.map_int16_to_mV(int_val)
